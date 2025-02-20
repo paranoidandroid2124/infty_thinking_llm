@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Math Solver Chat</title>
+  
+  <!-- Socket.IO 연결 -->
+  <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+
+  <!-- MathJax 라이브러리 추가 -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      options: {
+        enableMenu: false
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: #f2f2f2;
+    }
+    .chat-container {
+      max-width: 800px;
+      height: 100vh;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      background-color: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .chat-header {
+      padding: 20px;
+      text-align: center;
+      font-size: 24px;
+      font-weight: bold;
+      color: #000; /* 검은색 텍스트 */
+      border-bottom: 1px solid #ddd;
+      background-color: #fff;
+    }
+    .chat-window {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      background-color: #fafafa;
+    }
+    .message {
+      margin-bottom: 15px;
+      max-width: 70%;
+      padding: 10px 15px;
+      border-radius: 15px;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+    .message.user {
+      background-color: #dcf8c6;
+      align-self: flex-end;
+      text-align: right;
+    }
+    .message.assistant {
+      background-color: #f1f0f0;
+      align-self: flex-start;
+    }
+    .chat-input {
+      display: flex;
+      padding: 10px;
+      border-top: 1px solid #ddd;
+      background-color: #fff;
+    }
+    .chat-input input {
+      flex: 1;
+      padding: 10px 15px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 25px; /* 부드러운 곡선 */
+      outline: none;
+    }
+    .chat-input button {
+      padding: 10px 20px;
+      margin-left: 10px;
+      font-size: 16px;
+      background-color: #007BFF;
+      border: none;
+      color: #fff;
+      border-radius: 25px; /* 부드러운 곡선 */
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    .chat-input button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div class="chat-header">Math Solver Chat</div>
+    <div class="chat-window" id="chat-window">
+      <!-- 대화 메시지가 여기에 추가됩니다. -->
+    </div>
+    <div class="chat-input">
+      <input type="text" id="problem" placeholder="Enter your math problem">
+      <button id="submit">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    function appendMessage(sender, message) {
+      const chatWindow = document.getElementById("chat-window");
+      const messageDiv = document.createElement("div");
+      messageDiv.classList.add("message", sender);
+      messageDiv.innerHTML = message;
+      chatWindow.appendChild(messageDiv);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      if(window.MathJax){
+         MathJax.typesetPromise();
+      }
+    }
+
+    // 실시간 상태 업데이트 메시지 수신
+    socket.on("update", data => {
+      appendMessage("assistant", `<em>${data.message}</em>`);
+    });
+
+    // 최종 결과 메시지 수신
+    socket.on("result", data => {
+      appendMessage("assistant", data.solution);
+    });
+
+    function sendMessage() {
+      const problemInput = document.getElementById("problem");
+      const problem = problemInput.value;
+      if(problem.trim() === "") return;
+      appendMessage("user", problem);
+      problemInput.value = "";
+      socket.emit("update", {message: "Thinking..."});
+      fetch("/solve", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ problem: problem })
+      });
+    }
+
+    document.getElementById("submit").addEventListener("click", sendMessage);
+
+    // Enter 키를 누르면 메시지 전송
+    document.getElementById("problem").addEventListener("keydown", (e) => {
+      if(e.key === "Enter"){
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
