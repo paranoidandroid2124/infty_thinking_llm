@@ -1,6 +1,13 @@
 # 추론 반복 프롬프팅 구현
 
-requirements.txt 깔고, 가상환경 .evn 호출 뒤에 아나콘다에서 python app.py 실행하면 접속 가능.
+python -r requirements.txt 로 깔고, 가상환경 .env 호출
+
+.env에는
+
+SECRET_KEY=my_secret_key
+GOOGLE_API_KEY= YOUR GOOGLE API KEY 형식으로 입력.
+
+아나콘다에서 frontend 디렉토리로 접근 후에 python app.py 실행하면 커널 열려서 접속 가능.
 
 1. 메인화면, 우하단의 숫자 5는 재귀호출 횟수로, 늘리면 LLM이 생성 답변을 다시 인풋에 집어넣고 답변을 개선하는 방식으로 성능 개선
 ![1](https://github.com/user-attachments/assets/1047c191-c103-468a-821e-5bb5532337d1)  
