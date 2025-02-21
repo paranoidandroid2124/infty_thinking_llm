@@ -17,9 +17,8 @@ GOOGLE_API_KEY= YOUR GOOGLE API KEY 형식으로 입력.
 ![2](https://github.com/user-attachments/assets/59285afa-bfa2-4d71-b419-0ae472d45d76)
 
 3. prompt 부분을 지금 수학용으로 맞춰놨고, 번역 프롬프트 등 자유롭게 수정하면 됨
-"""
 
-    def prompt_math(problem, chat_history):
+def prompt_math(problem, chat_history):
     """이전 대화를 포함하여 새로운 문제를 풀도록 AI에게 요청"""
     history_text = "\n".join([f"User: {c['user']}\nAssistant: {c['assistant']}" for c in chat_history])	
     return f"""
@@ -122,5 +121,6 @@ GOOGLE_API_KEY= YOUR GOOGLE API KEY 형식으로 입력.
         Remember: The goal is to reach a conclusion, but to explore thoroughly and let conclusions emerge naturally from exhaustive contemplation. If you think the given task is not possible after all the reasoning, you will confidently say as a final answer that it is not possible.
     """
 
-4. 예시
+
+5. 예시
 ![4](https://github.com/user-attachments/assets/b9418fdc-56c0-4611-a532-2203720bdeb2)  
