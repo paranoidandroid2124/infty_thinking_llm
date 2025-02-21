@@ -1,9 +1,12 @@
-from flask import Flask, render_template, request, jsonify
+import os
+import re
+import json
+import uuid
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_socketio import SocketIO, emit
 from dotenv import dotenv_values
 from langchain.chat_models import init_chat_model
 from threading import Thread
-import json
 
 # .env 파일에서 API 키 불러오기
 env = dotenv_values()
@@ -21,24 +24,36 @@ model = init_chat_model(
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-CHAT_LOG_FILE = "chat_history.json"
+# 채팅방 대화 내역 저장용 JSON 파일 (각 채팅방별로 저장)
+CHAT_FILE = "chats.json"
 
-def save_chat_history(user_input, model_response):
-    try:
-        with open(CHAT_LOG_FILE, "r", encoding="utf-8") as file:
-            chat_history = json.load(file)
-    except FileNotFoundError:
-        chat_history = []
-    chat_history.append({"user": user_input, "assistant": model_response})
-    with open(CHAT_LOG_FILE, "w", encoding="utf-8") as file:
-        json.dump(chat_history, file, indent=4, ensure_ascii=False)
+def load_chats():
+    """chats.json 파일에서 모든 채팅방의 대화 내역을 로드"""
+    if not os.path.exists(CHAT_FILE):
+        return {}
+    with open(CHAT_FILE, "r", encoding="utf-8") as file:
+        return json.load(file)
 
-def load_chat_history():
-    try:
-        with open(CHAT_LOG_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
-    except FileNotFoundError:
-        return []
+def save_chats(chats):
+    """chats.json 파일에 채팅방 대화 내역을 저장"""
+    with open(CHAT_FILE, "w", encoding="utf-8") as file:
+        json.dump(chats, file, indent=4, ensure_ascii=False)
+
+def format_paragraphs(text):
+    # 문장 마침표 뒤에 줄바꿈을 추가
+    text = re.sub(r"\. ", ".\n\n", text) 
+    return text
+
+def insert_paragraph_breaks(text):
+    """
+    모델이 생성한 답변 내에서
+    **Problem**, **Current Solution** 등 특정 키워드를 기준으로
+    문단 구분을 위해 두 줄의 줄바꿈을 추가하는 함수
+    """
+    sections = ["**Problem**", "**Current Solution**", "**Refined Solution**", "**Final Answer**"]
+    for section in sections:
+        text = text.replace(section, f"\n\n{section}")
+    return text
 
 def prompt_math(problem, chat_history):
     """이전 대화를 포함하여 새로운 문제를 풀도록 AI에게 요청"""
@@ -53,6 +68,7 @@ def prompt_math(problem, chat_history):
     You are an assistant that engages in extremely thorough, self-questioning reasoning. Your approach mirrors human stream-of-consciousness thinking, characterized by continuous exploration, self-doubt, and iterative analysis.
 
     ** Most IMPORTANT: All the questions must be answered in Korean.
+	- 답변은 무조건 한국어로 생성해 주세요.
 
     ## Core Principles
 
@@ -143,7 +159,7 @@ def prompt_math(problem, chat_history):
         Remember: The goal is to reach a conclusion, but to explore thoroughly and let conclusions emerge naturally from exhaustive contemplation. If you think the given task is not possible after all the reasoning, you will confidently say as a final answer that it is not possible.
     """
 
-def refine_solution(problem, current_solution, iterations=3):
+def refine_solution(problem, current_solution, iterations=5):
     response = current_solution
     for i in range(iterations):
         refine_prompt = f"""
@@ -160,6 +176,10 @@ def refine_solution(problem, current_solution, iterations=3):
         - Correct any computational errors.
         - Enhance clarity and conciseness.
         - Format all equations properly using LaTeX.
+	- 답변은 무조건 한국어로 생성해 주세요.
+	- 출력 시, input text와 final response를 비롯한 각 단락은 세부적으로 문단화 되어서 줄 바꿈이 일어나야 합니다.
+	- 항목을 세분화해서 각 항목마다 설명을 하는 경우, 무조건적으로 줄 바꿈을 해야 합니다.
+	- 가독성을 확보해 주세요.
 
         **Final Answer:**
         """
@@ -167,31 +187,90 @@ def refine_solution(problem, current_solution, iterations=3):
         response = model.invoke(refine_prompt).content
     return response
 
-def process_math_problem(problem):
-    chat_history = load_chat_history()
+def process_math_problem(chat_id, problem, iterations=5):
+    chats = load_chats()
+    chat_history = chats.get(chat_id, [])
     ai_prompt = prompt_math(problem, chat_history)
     initial_solution = model.invoke(ai_prompt).content
     socketio.emit("update", {"message": "Initial solution received."})
-    final_solution = refine_solution(problem, initial_solution)
-    
-    # 추가 치환 없이 원본 LaTeX 포맷을 그대로 유지
-    save_chat_history(problem, final_solution)
+
+    # iterations 값을 인자로 전달
+    final_solution = refine_solution(problem, initial_solution, iterations)
+    final_solution = insert_paragraph_breaks(final_solution)
+    final_solution = format_paragraphs(final_solution)
+    final_solution = final_solution.replace("\n", "<br>")
+
+    chat_history.append({"user": problem, "assistant": final_solution})
+    chats[chat_id] = chat_history
+    save_chats(chats)
     return final_solution
+
+# === 웹 인터페이스 관련 라우트 ===
 
 @app.route("/")
 def index():
+    """메인 페이지 렌더링 (프론트엔드에서 사이드바와 채팅 UI를 구현)"""
     return render_template("index.html")
+
+# === API 엔드포인트: 여러 채팅방 관리 ===
+
+@app.route("/api/chat_rooms", methods=["GET"])
+def get_chat_rooms():
+    """모든 채팅방의 ID 목록 반환"""
+    chats = load_chats()
+    return jsonify(list(chats.keys()))
+
+@app.route("/api/new_chat", methods=["POST"])
+def new_chat():
+    """새로운 채팅방 생성 후 chat_id 반환"""
+    chats = load_chats()
+    chat_id = uuid.uuid4().hex[:8].upper()  # 예: "ABCD1234"
+    chats[chat_id] = []  # 빈 대화 내역 초기화
+    save_chats(chats)
+    return jsonify({"chat_id": chat_id})
+
+@app.route("/api/chat_rooms/<chat_id>", methods=["GET"])
+def get_chat_room(chat_id):
+    """특정 채팅방의 대화 내역 반환"""
+    chats = load_chats()
+    if chat_id not in chats:
+        return jsonify({"error": "Chat room not found"}), 404
+    return jsonify(chats[chat_id])
+
+# --- 기존 /api/chat_rooms/<chat_id>/message 엔드포인트 수정 ---
+@app.route("/api/chat_rooms/<chat_id>/message", methods=["POST"])
+def post_message(chat_id):
+    """특정 채팅방에 사용자 메시지를 추가하고, 모델의 답변 생성"""
+    chats = load_chats()
+    if chat_id not in chats:
+        return jsonify({"error": "Chat room not found"}), 404
+    data = request.get_json()
+    user_message = data.get("message", "")
+    # iterations 값 추가: 클라이언트가 전달한 값이 있으면 사용, 없으면 기본값 5
+    iterations = int(data.get("iterations", 5))
+    
+    # 모델 호출 및 대화 내역 업데이트 (process_math_problem 함수 내에서 수행)
+    assistant_reply = process_math_problem(chat_id, user_message, iterations)
+    
+    return jsonify({"assistant_reply": assistant_reply})
+
+
+# === 기존 /solve 엔드포인트 (단일 채팅용, 선택 사항) ===
 
 @app.route("/solve", methods=["POST"])
 def solve():
     data = request.get_json()
     problem = data.get("problem")
-
+    default_chat_id = "DEFAULT"
+    chats = load_chats()
+    if default_chat_id not in chats:
+        chats[default_chat_id] = []
+        save_chats(chats)
+    
     def background_task(problem):
-        final_solution = process_math_problem(problem)
-        # 모델 출력의 원본 LaTeX 포맷을 그대로 클라이언트로 전송
+        final_solution = process_math_problem(default_chat_id, problem)
         socketio.emit("result", {"solution": final_solution})
-
+    
     Thread(target=background_task, args=(problem,)).start()
     return jsonify({"status": "processing"})
 
